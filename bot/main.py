@@ -10,7 +10,7 @@ TOKEN = '7692227565:AAEC7nLwV-iCxG8RpwzjohW_b-3c7Q3546w'
 modelo = joblib.load("ml/price_predictor_model.pkl")
 
 # Cargar dataset único en español
-productos_df = pd.read_csv("datasets/productos_es.csv")
+productos_df = pd.read_csv("datasets/dataset.csv", encoding="latin1")
 productos_df = productos_df.dropna(subset=[
     "prod_name", "prod_name_long", "prod_brand", "category", "subcategory", "tags", "prod_unit_price"
 ])
