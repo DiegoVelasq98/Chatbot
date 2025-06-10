@@ -1,76 +1,68 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
-import pandas as pd
-import joblib
+import requests
 
-# Token de Telegram
+# Token del bot
 TOKEN = '7692227565:AAEC7nLwV-iCxG8RpwzjohW_b-3c7Q3546w'
-
-# Cargar modelo entrenado
-modelo = joblib.load("ml/price_predictor_model.pkl")
-
-# Cargar dataset único en español
-productos_df = pd.read_csv("datasets/dataset.csv", encoding="latin1")
-productos_df = productos_df.dropna(subset=[
-    "prod_name", "prod_name_long", "prod_brand", "category", "subcategory", "tags", "prod_unit_price"
-])
-productos_df = productos_df.rename(columns={"prod_unit_price": "price"})
 
 # Comando /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nombre = update.effective_user.first_name
     await update.message.reply_text(
-        f"¡Hola {update.effective_user.first_name}! 🛒\n"
-        f"Puedes escribirme el nombre de un producto o una categoría, y te daré el precio estimado."
+        f"¡Hola {nombre}! 🛒\n"
+        f"Escríbeme el nombre de un producto y te daré una sugerencia desde nuestra base de datos."
     )
 
-# Mensajes del usuario
+# Manejo de mensajes
 async def texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensaje = update.message.text.lower()
-    user = update.effective_user.first_name
-    print(f"[{user}] escribió: {mensaje}")
+    mensaje = update.message.text.strip().lower()
+    nombre_usuario = update.effective_user.first_name
+    print(f"[{nombre_usuario}] escribió: {mensaje}")
 
-    # Saludos
     saludos = ["hola", "hi", "buenas", "buenos días", "buenas tardes", "buenas noches"]
     if any(s in mensaje for s in saludos):
-        await update.message.reply_text(f"👋 ¡Hola {user}! ¿Qué producto o categoría deseas buscar?")
+        await update.message.reply_text(f"👋 ¡Hola {nombre_usuario}! ¿Qué producto deseas buscar?")
         return
 
-    # Buscar coincidencia en título largo o tags
-    productos = productos_df[
-        productos_df["prod_name_long"].str.lower().str.contains(mensaje, na=False)
-        | productos_df["tags"].str.lower().str.contains(mensaje, na=False)
-        | productos_df["category"].str.lower().str.contains(mensaje, na=False)
-    ]
+    try:
+        # Llamar a la API de sugerencias
+        response = requests.get("http://localhost:8000/api/sugerir-producto", params={"query": mensaje})
+        response.raise_for_status()
+        datos = response.json()
+        print("Respuesta de la API:", datos)
 
-    if not productos.empty:
-        prod = productos.sample(1).iloc[0]
+        # Soportar tanto lista como diccionario
+        if isinstance(datos, list) and len(datos) > 0:
+            prod = datos[0]
+        elif isinstance(datos, dict) and datos:
+            prod = datos
+        else:
+            respuesta = f"🔍 Lo siento {nombre_usuario}, no encontré sugerencias para: '{mensaje}'."
+            await update.message.reply_text(respuesta)
+            return
+
+        # Asegurar conversión segura de datos
+        nombre = str(prod.get('nombre', 'N/A'))
+        marca = str(prod.get('marca', 'N/A'))
+        categoria = str(prod.get('categoria', 'N/A'))
+        tags = str(prod.get('tags', 'N/A'))
+        precio = str(prod.get('precio_sugerido', 'N/A'))
+
+        # Construir respuesta segura (sin parse_mode)
         respuesta = (
-            f"🛍️ *{prod['prod_name_long']}*\n"
-            f"🏷️ Marca: {prod['prod_brand']}\n"
-            f"📦 Categoría: {prod['category']} > {prod['subcategory']}\n"
-            f"💬 Tags: {prod['tags']}\n"
-            f"💵 Precio real: ${prod['price']}"
-        )
-    else:
-        # Si no se encuentra, predecir con ML
-        ejemplo = productos_df.sample(1).iloc[0]
-        entrada = {
-            "prod_name": mensaje,
-            "prod_name_long": mensaje,
-            "prod_brand": ejemplo["prod_brand"],
-            "category": ejemplo["category"],
-            "subcategory": ejemplo["subcategory"],
-            "tags": ejemplo["tags"]
-        }
-        df_entrada = pd.DataFrame([entrada])
-        pred = modelo.predict(df_entrada)[0]
-
-        respuesta = (
-            f"🔍 No encontré coincidencia exacta.\n"
-            f"🤖 Precio estimado por IA: *${round(pred, 2)}*"
+            f"🔎 ¡{nombre_usuario}, encontré esto para ti!\n\n"
+            f"🛍️ Producto: {nombre}\n"
+            f"🏷️ Marca: {marca}\n"
+            f"📦 Categoría: {categoria}\n"
+            f"💬 Tags: {tags}\n"
+            f"💵 Precio sugerido: $ {precio}"
         )
 
-    await update.message.reply_text(respuesta, parse_mode="Markdown")
+    except Exception as e:
+        print(f"❌ Error al contactar la API: {e}")
+        respuesta = f"⚠️ Ocurrió un error, {nombre_usuario}. Intenta más tarde."
+
+    await update.message.reply_text(respuesta)
 
 # Inicializar el bot
 if __name__ == '__main__':
